@@ -1,0 +1,19 @@
+# =============================================================================
+#  infracost/infracost.yml — config-file que descreve QUAIS projetos custar.
+#  Usado por: `infracost breakdown --config-file=infracost/infracost.yml`
+#
+#  Cada "project" aponta para um diretório Terraform e um conjunto de var-files.
+#  O pipeline gera um baseline (branch base) e um diff (PR), comentando no PR.
+# =============================================================================
+version: 0.1
+
+projects:
+  - path: infra
+    name: iacdemo-dev
+    terraform_var_files:
+      - dev.tfvars
+
+  - path: infra
+    name: iacdemo-prod
+    terraform_var_files:
+      - prod.tfvars

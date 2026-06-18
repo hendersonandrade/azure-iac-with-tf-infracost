@@ -1,0 +1,32 @@
+# ---- Terraform ----
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+*.tfvars.secret
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraform.lock.hcl.bak
+.terraformrc
+terraform.rc
+*.tfplan
+tfplan
+
+# ---- Infracost ----
+infracost.json
+infracost-base.json
+.infracost/
+
+# ---- Azure / secrets ----
+*.azureauth
+.env
+*.pem
+
+# ---- Editor / OS ----
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,146 @@
+# =============================================================================
+#  .github/workflows/terraform.yml
+#  Pipeline IaC: fmt + validate + plan + Infracost (em PR) e apply (na main).
+#  Autenticação SEM SEGREDOS via OpenID Connect (Workload Identity Federation):
+#  o GitHub emite um token OIDC de curta duração; o Entra ID confia nesse token
+#  por meta de um Federated Credential. Nenhuma senha/secret de client é armazenada.
+# =============================================================================
+name: terraform
+
+on:
+  pull_request:
+    branches: [main]
+    paths: ['infra/**', 'modules/**', '.github/workflows/**']
+  push:
+    branches: [main]
+    paths: ['infra/**', 'modules/**', '.github/workflows/**']
+
+# Permissões mínimas: id-token p/ OIDC, contents p/ checkout, PRs p/ comentar.
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+env:
+  ARM_USE_OIDC: 'true'
+  ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+  ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+  TF_BACKEND_RG: ${{ vars.TF_BACKEND_RESOURCE_GROUP }}
+  TF_BACKEND_SA: ${{ vars.TF_BACKEND_STORAGE_ACCOUNT }}
+  WORKING_DIR: infra
+  VAR_FILE: dev.tfvars
+
+jobs:
+  # ---------------------------------------------------------------------------
+  #  PLAN — roda em todo PR e em todo push. Publica o plano como artefato e
+  #  comenta o custo estimado (Infracost) no PR.
+  # ---------------------------------------------------------------------------
+  plan:
+    name: validate & plan
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.WORKING_DIR }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Login no Azure usando o token OIDC — nenhuma client secret envolvida.
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.9.8'
+
+      # O backend é configurado em tempo de init (valores não-literais).
+      - name: Terraform init
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${TF_BACKEND_RG}" \
+            -backend-config="storage_account_name=${TF_BACKEND_SA}"
+
+      - name: Terraform fmt (check)
+        run: terraform fmt -check -recursive
+
+      - name: Terraform validate
+        run: terraform validate
+
+      - name: Terraform plan
+        run: terraform plan -input=false -var-file="${VAR_FILE}" -out=tfplan
+
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan
+          path: ${{ env.WORKING_DIR }}/tfplan
+          retention-days: 5
+
+      # ---- Infracost: estima o custo do diff e comenta no PR ----------------
+      - name: Setup Infracost
+        if: github.event_name == 'pull_request'
+        uses: infracost/actions/setup@v3
+        with:
+          api-key: ${{ secrets.INFRACOST_API_KEY }}
+
+      - name: Infracost breakdown (diff)
+        if: github.event_name == 'pull_request'
+        run: |
+          infracost diff \
+            --config-file=../infracost/infracost.yml \
+            --format=json \
+            --out-file=/tmp/infracost.json
+
+      - name: Post Infracost comment on PR
+        if: github.event_name == 'pull_request'
+        run: |
+          infracost comment github \
+            --path=/tmp/infracost.json \
+            --repo=$GITHUB_REPOSITORY \
+            --github-token=${{ secrets.GITHUB_TOKEN }} \
+            --pull-request=${{ github.event.pull_request.number }} \
+            --behavior=update
+
+  # ---------------------------------------------------------------------------
+  #  APPLY — só em push na main, e protegido por um Environment com aprovação
+  #  manual. Reusa o plano que o job anterior validou.
+  # ---------------------------------------------------------------------------
+  apply:
+    name: apply
+    needs: plan
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production # exige reviewers no Settings > Environments
+    defaults:
+      run:
+        working-directory: ${{ env.WORKING_DIR }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.9.8'
+
+      - name: Terraform init
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${TF_BACKEND_RG}" \
+            -backend-config="storage_account_name=${TF_BACKEND_SA}"
+
+      - name: Terraform apply
+        run: terraform apply -input=false -auto-approve -var-file="${VAR_FILE}"
