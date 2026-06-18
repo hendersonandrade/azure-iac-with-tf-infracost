@@ -1,4 +1,4 @@
-# azure-iac-with-tf-infracost
+# Azure IaC with Terraform and Infracost for FinOps (Shift-Left)
 
 > Laboratório **enterprise** de Infraestrutura como Código (IaC) no Azure com **Terraform**,
 > pipeline **GitHub Actions** autenticado por **OpenID Connect (Workload Identity Federation)**,
@@ -39,19 +39,19 @@ Este repositório é o **companion prático** do artigo
 ## Visão geral da esteira
 
 ```
-            ┌──────────────────────── GitHub ────────────────────────┐
+            ┌──────────────────────── GitHub ──────────────────────────┐
             │                                                          │
-  git push  │   Pull Request                     Push na main         │
-  ─────────▶│   ├─ terraform fmt / validate                          │
+  git push  │   Pull Request                     Push na main          │
+     ─────> ├─ terraform fmt / validate                                │
             │   ├─ terraform plan                                      │
             │   ├─ Infracost: custo comentado no PR                    │
             │   └─ (sem aplicar)                  ├─ terraform apply ──┼──┐
             │                                     └─ aprovação manual  │  │
-            └──────────┬───────────────────────────────────┬─────────┘  │
-                       │ token OIDC (sem segredos)          │ token OIDC  │
-                       ▼                                     ▼            ▼
+            └──────────┬───────────────────────────────────┬───────────┘  │
+                       │ token OIDC (sem segredos)         │ token OIDC   │
+                       ▼                                   ▼              ▼
                   ┌─────────┐                          ┌─────────┐  ┌─────────┐
-                  │ Entra ID│ ── access token curto ─▶ │ Azure RM│  │ Azure   │
+                  │ Entra ID│ ── access token curto ─> │ Azure RM│  │ Azure   │
                   │ (WIF)   │                          └─────────┘  │ recursos│
                   └─────────┘                                       └─────────┘
 
