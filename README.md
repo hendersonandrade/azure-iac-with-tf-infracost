@@ -435,8 +435,8 @@ Abra o PR no GitHub. O pipeline dispara o job **plan**:
 
 1. faz login no Azure via OIDC;
 2. roda `fmt -check`, `validate` e `plan`;
-3. o **Infracost** calcula o **diff de custo**, publica a tabela no resumo do run e posta um
-   **comentário no PR**.
+3. o **Infracost** calcula o baseline a partir da `main`, compara com o ambiente `dev` do PR,
+   publica a tabela no resumo do run e posta um **comentário no PR**.
 
 O comentário mostra o custo mensal **antes vs. depois** da sua mudança. Ajuste o SKU e dê
 `git push` de novo — o comentário é **atualizado** (graças a `--behavior=update`), não duplicado.

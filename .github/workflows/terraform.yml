@@ -106,11 +106,27 @@ jobs:
         with:
           api-key: ${{ secrets.INFRACOST_API_KEY }}
 
+      - name: Infracost baseline
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          git fetch --no-tags --depth=1 origin "${{ github.event.pull_request.base.sha }}"
+          git worktree add --detach /tmp/infracost-base "${{ github.event.pull_request.base.sha }}"
+          infracost breakdown \
+            --path=/tmp/infracost-base/infra \
+            --terraform-var-file="${VAR_FILE}" \
+            --project-name=iacdemo-dev \
+            --format=json \
+            --out-file=/tmp/infracost-base.json
+
       - name: Infracost diff
         if: github.event_name == 'pull_request'
         run: |
           infracost diff \
-            --config-file=../infracost/infracost.yml \
+            --path=. \
+            --terraform-var-file="${VAR_FILE}" \
+            --project-name=iacdemo-dev \
+            --compare-to=/tmp/infracost-base.json \
             --format=json \
             --out-file=/tmp/infracost.json
 
@@ -118,7 +134,9 @@ jobs:
         if: github.event_name != 'pull_request'
         run: |
           infracost breakdown \
-            --config-file=../infracost/infracost.yml \
+            --path=. \
+            --terraform-var-file="${VAR_FILE}" \
+            --project-name=iacdemo-dev \
             --format=json \
             --out-file=/tmp/infracost.json
 
