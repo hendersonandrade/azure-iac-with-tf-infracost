@@ -4,6 +4,6 @@ output "vnet_id" {
 }
 
 output "subnet_id" {
-  description = "ID da subnet do workload (consumida pela VM)."
+  description = "ID da subnet do workload."
   value       = azurerm_subnet.workload.id
 }

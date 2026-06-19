@@ -1,6 +1,6 @@
 # =============================================================================
 #  modules/networking — VNet + subnet + NSG (associado à subnet)
-#  Fornece o subnet_id que a VM consome.
+#  Fornece o subnet_id para workloads que precisem de subnet.
 # =============================================================================
 
 resource "azurerm_virtual_network" "this" {

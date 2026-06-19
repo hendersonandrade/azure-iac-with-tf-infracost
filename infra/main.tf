@@ -1,6 +1,6 @@
 # =============================================================================
 #  infra/main.tf
-#  Composição da stack: um resource group + os quatro módulos.
+#  Composição da stack: um resource group + os três módulos.
 #  Convenção de nomes: <recurso>-<workload>-<environment> (ex.: vnet-iacdemo-dev).
 # =============================================================================
 
@@ -24,7 +24,7 @@ resource "azurerm_resource_group" "this" {
   tags     = local.common_tags
 }
 
-# ---- Rede mínima que suporta a VM ----------------------------------------
+# ---- Rede base (VNet + subnet + NSG) -------------------------------------
 module "networking" {
   source = "../modules/networking"
 
@@ -43,19 +43,6 @@ module "storage" {
   name_suffix         = local.name_suffix
   location            = var.location
   resource_group_name = azurerm_resource_group.this.name
-  tags                = local.common_tags
-}
-
-# ---- 1 VM Linux -----------------------------------------------------------
-module "vm" {
-  source = "../modules/virtual-machine"
-
-  name_suffix         = local.name_suffix
-  location            = var.location
-  resource_group_name = azurerm_resource_group.this.name
-  subnet_id           = module.networking.subnet_id
-  vm_size             = var.vm_size
-  admin_username      = var.vm_admin_username
   tags                = local.common_tags
 }
 

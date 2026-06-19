@@ -12,11 +12,6 @@ output "storage_account_name" {
   value       = module.storage.storage_account_name
 }
 
-output "vm_private_ip" {
-  description = "IP privado da VM Linux."
-  value       = module.vm.private_ip_address
-}
-
 output "app_service_default_hostname" {
   description = "Hostname público do App Service."
   value       = module.app_service.default_hostname

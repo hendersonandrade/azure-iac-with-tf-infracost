@@ -63,9 +63,8 @@ Este repositório é o **companion prático** do artigo
 
 | Módulo | Recurso | Observações |
 | --- | --- | --- |
-| `modules/networking` | VNet + subnet + NSG | NSG associado à subnet; SSH liberado só de `10.0.0.0/8` |
+| `modules/networking` | VNet + subnet + NSG | rede base; NSG associado à subnet, SSH liberado só de `10.0.0.0/8` |
 | `modules/storage-account` | 1 Storage Account | TLS 1.2, sem acesso público, versionamento de blob, sufixo aleatório p/ nome único |
-| `modules/virtual-machine` | 1 VM Linux Ubuntu 24.04 + NIC | sem IP público (acesso via Bastion/VPN); chave SSH gerada |
 | `modules/app-service` | 1 App Service Plan (Linux) + Web App | HTTPS-only, identidade gerenciada (system-assigned) |
 
 ---
@@ -86,7 +85,7 @@ azure-iac-with-tf-infracost/
 │   ├── providers.tf                #   versões + backend "azurerm" remoto (OIDC)
 │   ├── main.tf                     #   cria o RG e compõe os 4 módulos
 │   ├── variables.tf                #   entradas da stack (com validações)
-│   ├── outputs.tf                  #   saídas (nome do RG, IP da VM, hostname...)
+│   ├── outputs.tf                  #   saídas (nome do RG, storage, hostname...)
 │   ├── data.tf                     #   data sources (client_config, subscription)
 │   ├── dev.tfvars                  #   valores do ambiente dev (barato)
 │   └── prod.tfvars                 #   valores do ambiente prod (SKUs maiores)
@@ -94,7 +93,6 @@ azure-iac-with-tf-infracost/
 ├── modules/                        # ► módulos reutilizáveis (1 responsabilidade cada)
 │   ├── networking/                 #   variables.tf · main.tf · outputs.tf
 │   ├── storage-account/
-│   ├── virtual-machine/
 │   └── app-service/
 │
 ├── infracost/
@@ -131,9 +129,9 @@ job de apply protegido pelo environment). Tanto o `provider "azurerm"` quanto o 
 `use_oidc = true`.
 
 **3. A composição modular.** A raiz `infra/main.tf` cria o resource group e injeta entradas em
-cada módulo. Saídas de um módulo viram entradas de outro — ex.: `module.networking.subnet_id`
-alimenta o módulo da VM. Cada módulo tem o contrato `variables.tf` (entradas) / `main.tf`
-(recursos) / `outputs.tf` (saídas).
+cada módulo. Saídas de um módulo podem virar entradas de outro — ex.: a rede expõe
+`module.networking.subnet_id`, pronto para um workload que precise de subnet. Cada módulo tem o
+contrato `variables.tf` (entradas) / `main.tf` (recursos) / `outputs.tf` (saídas).
 
 **4. O FinOps no PR.** No job de PR, o Infracost gera o **diff** de custo a partir do plano e
 comenta no Pull Request. Tags comuns (`environment`, `managedBy`, `costCenter`) em todos os
@@ -161,7 +159,7 @@ E também:
 - [ ] Uma conta gratuita no **Infracost** (gera a `INFRACOST_API_KEY`).
 
 > ⚠️ **Aviso de custo:** este laboratório provisiona recursos que **geram custo real**
-> (~US$ 45–55/mês em dev). Não esqueça o **Passo 9** (destroy) ao terminar.
+> (~US$ 13–15/mês em dev). Não esqueça o **Passo 9** (destroy) ao terminar.
 
 ---
 
@@ -414,7 +412,7 @@ Changes to Outputs:
   + app_service_default_hostname = (known after apply)
   + resource_group_name          = "rg-iacdemo-dev"
   + storage_account_name          = (known after apply)
-  + vm_private_ip                 = (known after apply)
+  + subscription_id               = "00000000-0000-0000-0000-000000000000"
 ```
 
 > Para autenticar **localmente** com OIDC você precisaria de uma sessão `az login` ativa — o
@@ -425,10 +423,10 @@ Changes to Outputs:
 ## Passo 6 — Abrir um Pull Request e ver o custo (Infracost)
 
 ```bash
-git checkout -b feat/ajusta-vm
-# ex.: aumente o vm_size em infra/dev.tfvars (Standard_B2s → Standard_D2s_v5)
-git commit -am "feat: aumenta o tamanho da VM"
-git push -u origin feat/ajusta-vm
+git checkout -b feat/ajusta-app-service
+# ex.: mude o app_service_sku em infra/dev.tfvars (B1 → P1v3)
+git commit -am "feat: muda o SKU do App Service"
+git push -u origin feat/ajusta-app-service
 ```
 
 Abra o PR no GitHub. O pipeline dispara o job **plan**:
@@ -473,7 +471,7 @@ a credencial federada `gh-production` do Passo 2.5 precisa existir no Entra ID.
 2. Vá em **Review deployments**, marque `production` e clique em **Approve and deploy**.
 3. O Terraform aplica a infraestrutura. Acompanhe o log do `terraform apply`.
 
-Ao final, os **outputs** aparecem no log (nome do RG, IP privado da VM, hostname do App Service).
+Ao final, os **outputs** aparecem no log (nome do RG, nome da Storage Account, hostname do App Service).
 
 ---
 
@@ -514,6 +512,8 @@ az ad app delete --id "$appId"
 
 ## Como customizar
 
+### Infraestrutura
+
 **Trocar a região:** edite `location` em `infra/dev.tfvars` (e no `bootstrap/main.parameters.json`,
 se quiser o state em outra região).
 
@@ -539,23 +539,69 @@ validação em `infra/variables.tf`, e um novo `project` em `infracost/infracost
 **Apontar o pipeline para outro ambiente:** o workflow usa `VAR_FILE: dev.tfvars` (variável `env`
 no topo de `.github/workflows/terraform.yml`). Troque para `prod.tfvars` ou parametrize por branch.
 
+### Infracost
+
+**Mudar a moeda (currency).** Por padrão o Infracost mostra os custos em **USD** — as nuvens
+publicam os preços em dólar e a CLI converte pela taxa de câmbio atual. Para exibir em **BRL**
+(ou qualquer código [ISO 4217](https://en.wikipedia.org/wiki/ISO_4217) — `EUR`, `GBP`, `INR`...):
+
+- **No pipeline (CI):** defina a variável de ambiente `INFRACOST_CURRENCY`. O jeito mais simples é
+  adicioná-la ao bloco `env:` no topo de `.github/workflows/terraform.yml`, para que todos os steps
+  do Infracost a herdem:
+
+  ```yaml
+  env:
+    # ... demais variáveis
+    INFRACOST_CURRENCY: BRL
+  ```
+
+- **Localmente:** grave a preferência na config da CLI (vale para todos os comandos da máquina):
+
+  ```bash
+  infracost configure set currency BRL
+  # ou, pontualmente, via variável de ambiente:
+  INFRACOST_CURRENCY=BRL infracost breakdown --path=infra --terraform-var-file=dev.tfvars
+  ```
+
+> 💡 A conversão usa a cotação do momento da execução — o número é uma **estimativa** em moeda
+> local, não um valor contratado. Mantenha um código por execução; o Infracost não soma moedas
+> diferentes.
+
+**Premissas de uso (recursos por consumo).** Custos que dependem de uso (egress de rede,
+operações em storage, execuções) não têm um valor fixo. Crie um `infracost-usage.yml` com suas
+premissas e aponte com `--usage-file`:
+
+```bash
+infracost breakdown --path=infra --terraform-var-file=dev.tfvars \
+  --usage-file=infracost/infracost-usage.yml
+```
+
+**Escolher quais projetos/var-files custar.** Edite `infracost/infracost.yml` (já traz `dev` e
+`prod`). Cada `project` aponta para um diretório e um conjunto de `terraform_var_files`.
+
+**Comportamento do comentário no PR.** O workflow usa `--behavior=update` (mantém um único
+comentário, atualizado a cada push). Outras opções: `new` (um novo a cada push), `delete-and-new`
+e `hide-and-new`. Veja [`infracost comment github`](https://www.infracost.io/docs/features/cli_commands/#comment-on-pull-requests).
+
+**Guardrails de custo.** Limites do tipo "bloquear PR acima de X/mês" são configurados no
+**Infracost Cloud** (Passo 8), não no YAML — é a fase *Operate* do FinOps virando portão.
+
 ---
 
 ## Custo de referência do laboratório
 
-Estimativa (`Standard_B2s` + Storage LRS + App Service `B1`, região Brazil South — **confirme
-sempre no Infracost**, os preços mudam e variam por região):
+Estimativa (App Service `B1` + Storage LRS, região Brazil South — **confirme sempre no
+Infracost**, os preços mudam e variam por região):
 
 | Recurso | Ordem de grandeza/mês |
 | --- | --- |
-| VM Linux `Standard_B2s` | ~US$ 30–40 |
 | App Service Plan `B1` | ~US$ 13 |
 | Storage Account (LRS, vazia) | < US$ 1 |
-| VNet / NSG / NIC | sem custo base relevante |
-| **Total dev** | **~US$ 45–55/mês** |
+| VNet / NSG | sem custo base relevante |
+| **Total dev** | **~US$ 13–15/mês** |
 
-O ambiente `prod.tfvars` usa `Standard_D2s_v5` + App Service `P1v3` e custa
-significativamente mais — não o aplique sem necessidade.
+O ambiente `prod.tfvars` usa App Service `P1v3` e custa significativamente mais — não o aplique
+sem necessidade.
 
 ---
 

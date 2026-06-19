@@ -31,21 +31,9 @@ variable "address_space" {
 }
 
 variable "subnet_prefix" {
-  description = "CIDR da subnet que hospeda a VM."
+  description = "CIDR da subnet do workload."
   type        = string
   default     = "10.40.1.0/24"
-}
-
-variable "vm_size" {
-  description = "SKU da VM Linux."
-  type        = string
-  default     = "Standard_B2s"
-}
-
-variable "vm_admin_username" {
-  description = "Usuário admin da VM."
-  type        = string
-  default     = "azureuser"
 }
 
 variable "app_service_sku" {
