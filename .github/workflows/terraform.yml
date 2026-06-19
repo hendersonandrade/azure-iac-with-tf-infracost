@@ -10,10 +10,10 @@ name: terraform
 on:
   pull_request:
     branches: [main]
-    paths: ['infra/**', 'modules/**', '.github/workflows/**']
+    paths: ['infra/**', 'modules/**', '.github/workflows/terraform.yml']
   push:
     branches: [main]
-    paths: ['infra/**', 'modules/**', '.github/workflows/**']
+    paths: ['bootstrap/**', 'infra/**', 'modules/**', '.github/workflows/**']
 
 # Permissões mínimas: id-token p/ OIDC, contents p/ checkout, PRs p/ comentar.
 permissions:
@@ -26,18 +26,27 @@ env:
   ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
   ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
   ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-  TF_BACKEND_RG: ${{ vars.TF_BACKEND_RESOURCE_GROUP }}
-  TF_BACKEND_SA: ${{ vars.TF_BACKEND_STORAGE_ACCOUNT }}
   WORKING_DIR: infra
   VAR_FILE: dev.tfvars
 
 jobs:
+  # ---------------------------------------------------------------------------
+  #  BOOTSTRAP — em push na main, garante que o backend exista antes do init.
+  #  O workflow chamado também pode ser executado manualmente sob demanda.
+  # ---------------------------------------------------------------------------
+  bootstrap:
+    name: bootstrap tfstate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/bootstrap-tfstate.yml
+
   # ---------------------------------------------------------------------------
   #  PLAN — roda em todo PR e em todo push. Publica o plano como artefato e
   #  comenta o custo estimado (Infracost) no PR.
   # ---------------------------------------------------------------------------
   plan:
     name: validate & plan
+    needs: bootstrap
+    if: always() && (needs.bootstrap.result == 'success' || needs.bootstrap.result == 'skipped')
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -58,6 +67,15 @@ jobs:
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: '1.9.8'
+
+      - name: Load backend configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          parameters='../bootstrap/main.parameters.json'
+          backend_rg="$(jq -er '.parameters.resourceGroupName.value' "${parameters}")"
+          backend_sa="$(jq -er '.parameters.storageAccountName.value' "${parameters}")"
+          printf 'TF_BACKEND_RG=%s\nTF_BACKEND_SA=%s\n' "${backend_rg}" "${backend_sa}" >> "${GITHUB_ENV}"
 
       # O backend é configurado em tempo de init (valores não-literais).
       - name: Terraform init
@@ -135,6 +153,15 @@ jobs:
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: '1.9.8'
+
+      - name: Load backend configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          parameters='../bootstrap/main.parameters.json'
+          backend_rg="$(jq -er '.parameters.resourceGroupName.value' "${parameters}")"
+          backend_sa="$(jq -er '.parameters.storageAccountName.value' "${parameters}")"
+          printf 'TF_BACKEND_RG=%s\nTF_BACKEND_SA=%s\n' "${backend_rg}" "${backend_sa}" >> "${GITHUB_ENV}"
 
       - name: Terraform init
         run: |

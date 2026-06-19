@@ -20,9 +20,9 @@ Este repositório é o **companion prático** do artigo
 3. [Como as peças se encaixam](#como-as-peças-se-encaixam)
 4. [Pré-requisitos](#pré-requisitos)
 5. [Passo 1 — Clonar o repositório](#passo-1--clonar-o-repositório)
-6. [Passo 2 — Backend de state (Bicep)](#passo-2--provisionar-o-backend-de-state-bicep)
-7. [Passo 3 — Identidade federada (OIDC)](#passo-3--criar-a-identidade-federada-oidc--sem-segredos)
-8. [Passo 4 — Variables e Secrets no GitHub](#passo-4--configurar-variables-e-secrets-no-github)
+6. [Passo 2 — Identidade federada (OIDC)](#passo-2--criar-a-identidade-federada-oidc--sem-segredos)
+7. [Passo 3 — Variables e Secrets no GitHub](#passo-3--configurar-variables-e-secrets-no-github)
+8. [Passo 4 — Backend de state pelo pipeline](#passo-4--provisionar-o-backend-de-state-pelo-pipeline)
 9. [Passo 5 — Rodar localmente (opcional)](#passo-5--opcional-rodar-localmente-antes-do-pipeline)
 10. [Passo 6 — Pull Request + Infracost](#passo-6--abrir-um-pull-request-e-ver-o-custo-infracost)
 11. [Passo 7 — Merge e apply](#passo-7--fazer-merge-e-aplicar-com-aprovação)
@@ -55,7 +55,7 @@ Este repositório é o **companion prático** do artigo
                   │ (WIF)   │                          └─────────┘  │ recursos│
                   └─────────┘                                       └─────────┘
 
-  state remoto  ─▶  Storage Account (criada por Bicep, fora do ciclo do Terraform)
+  workflow bootstrap ─▶ Bicep ─▶ Storage Account do state (fora do ciclo do Terraform)
 ```
 
 **Recursos provisionados** pela stack Terraform (`infra/`):
@@ -74,7 +74,7 @@ Este repositório é o **companion prático** do artigo
 ```
 azure-iac-with-tf-infracost/
 │
-├── bootstrap/                      # ► PASSO 2 — backend de state (Bicep, execução única)
+├── bootstrap/                      # ► PASSO 4 — backend de state (Bicep, execução única)
 │   ├── main.bicep                  #   escopo subscription: cria RG + chama o módulo
 │   ├── modules/
 │   │   └── state-storage.bicep     #   Storage Account endurecida + container "tfstate"
@@ -100,15 +100,16 @@ azure-iac-with-tf-infracost/
 │   └── infracost.yml               # ► quais projetos/var-files custar (dev + prod)
 │
 ├── .github/workflows/
-│   └── terraform.yml               # ► o pipeline: plan (PR/push) + apply (main)
+│   ├── bootstrap-tfstate.yml       # ► cria o backend via Bicep + OIDC
+│   └── terraform.yml               # ► plan (PR/push) + apply (main)
 │
 ├── .gitignore                      # ignora .terraform/, *.tfstate, infracost.json...
 └── README.md                       # este guia
 ```
 
 > **Por que `bootstrap/` é separado de `infra/`?** São dois ciclos de vida distintos: o
-> backend de state é criado **uma vez** por um administrador (com Bicep, que não tem state
-> próprio), e a partir daí a stack `infra/` é aplicada **continuamente** pelo pipeline. Misturar
+> backend de state é criado **uma vez** pelo workflow dedicado (com Bicep, que não tem state
+> próprio), e a partir daí a stack `infra/` é aplicada **continuamente** pelo outro workflow. Misturar
 > os dois recria o problema do "ovo e galinha" do state. Veja a explicação completa no
 > [artigo](https://hendersonandrade.github.io/blog/azure-terraform-infracost.pt-br.html#backend-bicep).
 
@@ -117,9 +118,9 @@ azure-iac-with-tf-infracost/
 ## Como as peças se encaixam
 
 **1. O state remoto.** O Terraform guarda o `tfstate` (mapa entre código e recursos reais) num
-backend `azurerm` — a Storage Account criada no Passo 2. Como o bloco `backend` não aceita
+backend `azurerm` — a Storage Account criada no Passo 4. Como o bloco `backend` não aceita
 variáveis, o nome do RG e da Storage Account são passados em tempo de `init` via `-backend-config`
-(o pipeline lê isso das *Variables* do GitHub).
+(o pipeline lê esses valores diretamente de `bootstrap/main.parameters.json`).
 
 **2. Autenticação sem segredos (OIDC).** Em vez de uma client secret guardada, o GitHub Actions
 emite um **token OIDC** de curta duração por execução. O Entra ID confia nesse token graças a um
@@ -152,7 +153,7 @@ Confira as versões antes de começar:
 E também:
 
 - [ ] Uma **subscription Azure** com permissão de **Owner** (ou Contributor + User Access Administrator,
-      necessário para criar a *role assignment* do Passo 3).
+      necessário para criar a *role assignment* do Passo 2).
 - [ ] Uma conta no **GitHub** e permissão para criar Secrets/Variables/Environments no repositório
       (faça um *fork* deste repo, se preferir).
 - [ ] Uma conta gratuita no **Infracost** (gera a `INFRACOST_API_KEY`).
@@ -170,76 +171,30 @@ cd azure-iac-with-tf-infracost
 ```
 
 > Se você fez um **fork**, troque a URL pelo seu `org/repo`. Isso importa: o `subject` do
-> federated credential (Passo 3) precisa casar com o **seu** repositório.
+> federated credential (Passo 2) precisa casar com o **seu** repositório.
 
 ---
 
-## Passo 2 — Provisionar o backend de state (Bicep)
-
-> **Por quê primeiro e por que Bicep?** O Terraform precisa de um backend remoto
-> (uma Storage Account com um container) para guardar o `tfstate` **antes** de rodar. Criar esse
-> backend com o próprio Terraform é "ovo e galinha". Bicep é nativo do Azure, **idempotente** e
-> **não guarda state local** — perfeito para esse bootstrap único.
-
-**2.1 — Faça login e selecione a subscription:**
-
-```bash
-az login
-az account set --subscription "<SUBSCRIPTION_ID>"
-az account show --output table          # confirme o contexto
-```
-
-**2.2 — Edite os parâmetros** em `bootstrap/main.parameters.json`. O campo crítico é
-`storageAccountName` — precisa ser **globalmente único** (3–24 chars, só minúsculas e dígitos):
-
-```jsonc
-{
-  "parameters": {
-    "location":            { "value": "brazilsouth" },
-    "resourceGroupName":   { "value": "rg-tfstate-prod" },
-    "storageAccountName":  { "value": "sttfstateSEUNOME01" },   // ← TROQUE para algo único
-    "containerName":       { "value": "tfstate" }
-  }
-}
-```
-
-**2.3 — Rode o bootstrap:**
-
-```bash
-cd bootstrap
-bash deploy.sh
-cd ..
-```
-
-**Saída esperada** (no fim do `deploy.sh`):
-
-```jsonc
-{
-  "containerName":      { "type": "String", "value": "tfstate" },
-  "resourceGroupName":  { "type": "String", "value": "rg-tfstate-prod" },
-  "storageAccountName": { "type": "String", "value": "sttfstateSEUNOME01" }
-}
-```
-
-📌 **Anote** `resourceGroupName` e `storageAccountName` — eles vão para as *Variables* do GitHub
-(Passo 4) e para o `terraform init` local (Passo 5).
-
-**Verifique** que o container existe:
-
-```bash
-az storage container list \
-  --account-name "sttfstateSEUNOME01" \
-  --auth-mode login --output table
-```
-
----
-
-## Passo 3 — Criar a identidade federada (OIDC / sem segredos)
+## Passo 2 — Criar a identidade federada (OIDC / sem segredos)
 
 Cria um **App Registration** no Entra ID e **dois Federated Credentials** (um para a branch
-`main`, outro para Pull Requests) — **sem nenhuma client secret**.
+`main`, outro para Pull Requests) — **sem nenhuma client secret**. A credencial da `main`
+autentica tanto o bootstrap do state quanto o `terraform apply`.
 
-**3.1 — Crie o app e o service principal:**
+**2.1 — Confirme a sessão e a subscription usadas no bootstrap do OIDC:**
+
+Esta autenticação administrativa é necessária apenas para a configuração inicial da identidade.
+O pipeline ainda não pode usar OIDC porque o App Registration e os Federated Credentials serão
+criados nos próximos passos. Se a Azure CLI já estiver autenticada e apontando para a subscription
+correta, pule os dois primeiros comandos e apenas confirme o contexto com `az account show`.
+
+```bash
+az login                                      # somente se não houver uma sessão ativa
+az account set --subscription "<SUBSCRIPTION_ID>"  # somente se precisar trocar a subscription
+az account show --output table
+```
+
+**2.2 — Crie o app e o service principal:**
 
 ```bash
 appId=$(az ad app create --display-name "gh-azure-iac-tf" --query appId -o tsv)
@@ -247,7 +202,7 @@ az ad sp create --id "$appId"
 echo "AZURE_CLIENT_ID = $appId"          # guarde este valor
 ```
 
-**3.2 — Credencial federada para a `main`** (push → apply):
+**2.3 — Credencial federada para a `main`** (bootstrap e push → apply):
 
 ```bash
 az ad app federated-credential create --id "$appId" --parameters '{
@@ -258,7 +213,7 @@ az ad app federated-credential create --id "$appId" --parameters '{
 }'
 ```
 
-**3.3 — Credencial federada para Pull Requests** (PR → plan + Infracost):
+**2.4 — Credencial federada para Pull Requests** (PR → plan + Infracost):
 
 ```bash
 az ad app federated-credential create --id "$appId" --parameters '{
@@ -269,7 +224,7 @@ az ad app federated-credential create --id "$appId" --parameters '{
 }'
 ```
 
-**3.4 — Dê permissão ao service principal na subscription:**
+**2.5 — Dê permissão ao service principal na subscription:**
 
 ```bash
 subId=$(az account show --query id -o tsv)
@@ -284,21 +239,36 @@ az role assignment create --assignee "$appId" \
 
 ---
 
-## Passo 4 — Configurar Variables e Secrets no GitHub
+## Passo 3 — Configurar Variables e Secrets no GitHub
 
 No repositório: **Settings → Secrets and variables → Actions**.
 
-**4.1 — Variables** (aba *Variables* → *New repository variable*):
+**3.1 — Defina o backend e as Variables.** Primeiro ajuste `bootstrap/main.parameters.json`.
+O `storageAccountName` deve ser globalmente único (3–24 caracteres, somente minúsculas e
+dígitos):
+
+```jsonc
+{
+  "parameters": {
+    "location":           { "value": "brazilsouth" },
+    "resourceGroupName":  { "value": "rg-tfstate-prod" },
+    "storageAccountName": { "value": "sttfstateabc12345" },
+    "containerName":      { "value": "tfstate" }
+  }
+}
+```
+
+O pipeline usa esse arquivo como fonte única de verdade para `resourceGroupName` e
+`storageAccountName`; não é necessário duplicar esses valores como Variables do GitHub.
+Na aba *Variables*, cadastre somente os dados da identidade OIDC:
 
 | Nome | Valor | De onde vem |
 | --- | --- | --- |
-| `AZURE_CLIENT_ID` | o `appId` | Passo 3.1 |
+| `AZURE_CLIENT_ID` | o `appId` | Passo 2.2 |
 | `AZURE_TENANT_ID` | seu tenant | `az account show --query tenantId -o tsv` |
 | `AZURE_SUBSCRIPTION_ID` | id da subscription | `az account show --query id -o tsv` |
-| `TF_BACKEND_RESOURCE_GROUP` | `rg-tfstate-prod` | output do Passo 2 |
-| `TF_BACKEND_STORAGE_ACCOUNT` | `sttfstateSEUNOME01` | output do Passo 2 |
 
-**4.2 — Obter a `INFRACOST_API_KEY`.**
+**3.2 — Obter a `INFRACOST_API_KEY`.**
 
 A API key é **gratuita** e identifica a sua conta junto à Cloud Pricing API (é ela que faz a
 busca de preços). Há duas formas de obtê-la:
@@ -336,11 +306,11 @@ infracost configure get api_key
 > para o lab. Em times, prefira uma chave da **organização** (no Infracost Cloud) para que os
 > custos de todos os repositórios sejam agregados no mesmo dashboard.
 
-**4.3 — Cadastrar a chave como Secret no GitHub** (aba *Secrets* → *New repository secret*):
+**3.3 — Cadastrar a chave como Secret no GitHub** (aba *Secrets* → *New repository secret*):
 
 | Nome | Valor | De onde vem |
 | --- | --- | --- |
-| `INFRACOST_API_KEY` | a chave `ico-...` | Passo 4.2 (`infracost configure get api_key`) |
+| `INFRACOST_API_KEY` | a chave `ico-...` | Passo 3.2 (`infracost configure get api_key`) |
 
 > No workflow, essa Secret é injetada na action `infracost/actions/setup@v3` via
 > `with: { api-key: ${{ secrets.INFRACOST_API_KEY }} }` — é o único segredo do pipeline (o resto é
@@ -348,11 +318,54 @@ infracost configure get api_key
 > de novo: a CLI já a lê de `credentials.yml`. Em CI, se preferir uma variável de ambiente em vez da
 > action, exporte `INFRACOST_API_KEY=${{ secrets.INFRACOST_API_KEY }}`.
 
-**4.4 — Environment de produção** (**Settings → Environments → New environment**):
+**3.4 — Environment de produção** (**Settings → Environments → New environment**):
 
 - Crie um environment chamado exatamente **`production`**.
 - Marque **Required reviewers** e adicione você mesmo. É isso que faz o job `apply` **pausar e
   esperar aprovação** antes de tocar no Azure.
+
+---
+
+## Passo 4 — Provisionar o backend de state pelo pipeline
+
+O Terraform precisa da Storage Account antes do primeiro `terraform init`. Ela continua sendo
+declarada em Bicep para não criar uma dependência circular de state, mas agora a criação é feita
+pelo workflow dedicado, com a mesma autenticação OIDC sem segredos usada pelo Terraform.
+
+Em todo push relevante na `main`, o pipeline `terraform` chama primeiro o workflow reutilizável
+`bootstrap tfstate` e só libera o `terraform init` depois que o backend estiver pronto. Isso evita
+uma corrida entre a criação da Storage Account e o job de plan. Para reaplicar o backend sob
+demanda:
+
+1. Abra **Actions → bootstrap tfstate → Run workflow**.
+2. Selecione a branch **`main`** e confirme em **Run workflow**.
+3. Acompanhe os passos de login OIDC, validação e implantação.
+
+Se preferir disparar pela GitHub CLI:
+
+```bash
+gh workflow run bootstrap-tfstate.yml --ref main
+gh run watch
+```
+
+O deployment é **idempotente**: executá-lo novamente com os mesmos parâmetros mantém o backend
+existente. Ao final, o log exibe os outputs usados pelo Terraform:
+
+```jsonc
+{
+  "containerName":      { "type": "String", "value": "tfstate" },
+  "resourceGroupName":  { "type": "String", "value": "rg-tfstate-prod" },
+  "storageAccountName": { "type": "String", "value": "sttfstateabc12345" }
+}
+```
+
+Opcionalmente, verifique o container pelo Azure CLI:
+
+```bash
+az storage container list \
+  --account-name "sttfstateabc12345" \
+  --auth-mode login --output table
+```
 
 ---
 
@@ -365,7 +378,7 @@ cd infra
 
 terraform init \
   -backend-config="resource_group_name=rg-tfstate-prod" \
-  -backend-config="storage_account_name=sttfstateSEUNOME01"
+  -backend-config="storage_account_name=sttfstateabc12345"
 
 terraform fmt -recursive          # formata os .tf
 terraform validate                # valida sintaxe e referências
@@ -436,7 +449,7 @@ Crie uma conta no [Infracost Cloud](https://dashboard.infracost.io/) (camada gra
 - configurar **guardrails/políticas** — ex.: marcar para revisão qualquer PR que aumente o custo
   acima de um limite, ou exigir aprovação do FinOps.
 
-A CLI já envia os dados usando a mesma `INFRACOST_API_KEY` configurada no Passo 4.
+A CLI já envia os dados usando a mesma `INFRACOST_API_KEY` configurada no Passo 3.
 
 ---
 
@@ -448,7 +461,7 @@ terraform destroy -var-file=dev.tfvars
 cd ..
 ```
 
-O backend de state (criado no Passo 2) é **separado** e sobrevive ao destroy. Se não for
+O backend de state (criado no Passo 4) é **separado** e sobrevive ao destroy. Se não for
 reutilizar, apague-o também:
 
 ```bash
@@ -514,8 +527,9 @@ significativamente mais — não o aplique sem necessidade.
 
 | Sintoma | Causa provável / correção |
 | --- | --- |
-| `Error: building AzureRM Client: ... OIDC` | O `subject` do federated credential não casa com o repo/branch (Passo 3). Verifique `org/repo` e o gatilho (`ref:refs/heads/main` vs `pull_request`). |
+| `Error: building AzureRM Client: ... OIDC` | O `subject` do federated credential não casa com o repo/branch (Passo 2). Verifique `org/repo` e o gatilho (`ref:refs/heads/main` vs `pull_request`). |
 | `AADSTS70021: No matching federated identity record found` | Faltou criar a credencial federada para o gatilho em uso (PR usa `:pull_request`, push usa `:ref:refs/heads/main`). |
+| Pipeline não encontra a configuração do backend | Verifique se `resourceGroupName` e `storageAccountName` existem em `bootstrap/main.parameters.json`. |
 | `A resource with the ID ... already exists` | Nome de recurso não é único (ex.: `storageAccountName`). Ajuste o parâmetro/`*.tfvars`. |
 | `Error acquiring the state lock` | Um `apply` anterior travou o state. Rode `terraform force-unlock <LOCK_ID>` com cuidado. |
 | `Backend configuration changed` | Você mudou `-backend-config`. Rode `terraform init -reconfigure`. |
