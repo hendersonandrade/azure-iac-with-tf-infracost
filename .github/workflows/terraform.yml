@@ -143,26 +143,44 @@ jobs:
       - name: Publish Infracost summary
         shell: bash
         run: |
-          if [[ "${GITHUB_EVENT_NAME}" == 'pull_request' ]]; then
+          infracost output \
+            --path=/tmp/infracost.json \
+            --format=table \
+            --fields=all \
+            --no-color | tee /tmp/infracost-table.txt
+
+          : > /tmp/infracost-diff.txt
+
+          if [[ "${GITHUB_EVENT_NAME}" == 'pull_request' ]] &&
+            jq -e '
+              [
+                .diffTotalMonthlyCost,
+                .diffTotalMonthlyUsageCost
+              ]
+              | map(select(. != null) | tonumber)
+              | any(. != 0)
+            ' /tmp/infracost.json > /dev/null; then
             infracost output \
               --path=/tmp/infracost.json \
               --format=diff \
-              --no-color | tee /tmp/infracost-report.txt
-            report_title='Infracost cost diff'
-          else
-            infracost output \
-              --path=/tmp/infracost.json \
-              --format=table \
-              --no-color | tee /tmp/infracost-report.txt
-            report_title='Infracost cost estimate'
+              --no-color | tee /tmp/infracost-diff.txt
           fi
 
           {
-            echo "## ${report_title}"
+            echo '## Infracost detailed cost estimate'
             echo
             echo '```text'
-            cat /tmp/infracost-report.txt
+            cat /tmp/infracost-table.txt
             echo '```'
+
+            if [[ -s /tmp/infracost-diff.txt ]]; then
+              echo
+              echo '## Infracost monthly cost diff'
+              echo
+              echo '```text'
+              cat /tmp/infracost-diff.txt
+              echo '```'
+            fi
           } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Post Infracost comment on PR
@@ -176,16 +194,18 @@ jobs:
             --show-all-projects \
             --behavior=update
 
-      - name: Append cost diff to Infracost comment
+      - name: Append cost estimate to Infracost comment
         if: github.event_name == 'pull_request' && always()
         uses: actions/github-script@v7
         env:
-          INFRACOST_REPORT_PATH: /tmp/infracost-report.txt
+          INFRACOST_TABLE_PATH: /tmp/infracost-table.txt
+          INFRACOST_DIFF_PATH: /tmp/infracost-diff.txt
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
-            const sectionMarker = '<!-- infracost-cost-diff -->';
+            const sectionMarker = '<!-- infracost-cost-details -->';
+            const legacySectionMarker = '<!-- infracost-cost-diff -->';
             const { owner, repo } = context.repo;
             const issue_number = context.issue.number;
 
@@ -203,9 +223,19 @@ jobs:
               return;
             }
 
-            const costDiff = fs.readFileSync(process.env.INFRACOST_REPORT_PATH, 'utf8').trim();
-            const compliance = comment.body.split(sectionMarker)[0].trimEnd();
-            const body = `${compliance}\n\n${sectionMarker}\n<h4>💵 Cost diff</h4>\n\n\`\`\`text\n${costDiff}\n\`\`\`\n`;
+            const costTable = fs.readFileSync(process.env.INFRACOST_TABLE_PATH, 'utf8').trim();
+            const costDiff = fs.readFileSync(process.env.INFRACOST_DIFF_PATH, 'utf8').trim();
+            const compliance = comment.body
+              .split(sectionMarker)[0]
+              .split(legacySectionMarker)[0]
+              .trimEnd();
+            let costDetails = `<h4>💵 Detailed monthly cost estimate</h4>\n\n\`\`\`text\n${costTable}\n\`\`\``;
+
+            if (costDiff) {
+              costDetails += `\n\n<h4>📊 Monthly cost diff</h4>\n\n\`\`\`text\n${costDiff}\n\`\`\``;
+            }
+
+            const body = `${compliance}\n\n${sectionMarker}\n${costDetails}\n`;
 
             await github.rest.issues.updateComment({
               owner,

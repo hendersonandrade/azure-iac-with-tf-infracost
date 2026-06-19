@@ -435,16 +435,20 @@ Abra o PR no GitHub. O pipeline dispara o job **plan**:
 
 1. faz login no Azure via OIDC;
 2. roda `fmt -check`, `validate` e `plan`;
-3. o **Infracost** calcula o baseline a partir da `main`, compara com o ambiente `dev` do PR,
-   publica a tabela no resumo do run e posta um **comentário no PR**.
+3. o **Infracost** calcula a estimativa completa do ambiente `dev`, usa a `main` como baseline
+   para avaliar eventuais mudanças e posta o resultado no Summary e em um **comentário no PR**.
 
-O comentário mostra o custo mensal **antes vs. depois** da sua mudança. Ajuste o SKU e dê
-`git push` de novo — o comentário é **atualizado** (graças a `--behavior=update`), não duplicado.
-Mesmo quando o PR não altera custos, a seção **Cost diff** permanece no comentário e explicita
-que não houve mudança. O mesmo diff aparece no log do step **Publish Infracost summary** e no
-Summary do run; ele não faz parte do texto nativo produzido pelo comando `terraform plan`. O
-comentário preserva dinamicamente o resultado de conformidade retornado pelo Infracost Cloud e
-acrescenta o diff calculado pelo workflow.
+O comentário sempre mostra a tabela **Detailed monthly cost estimate**, com preço unitário,
+quantidade mensal, unidade, custo por hora e custo mensal de cada recurso planejado. A seção
+**Monthly cost diff** só aparece quando a branch realmente altera o custo mensal em relação ao
+código da `main`. O Infracost compara versões do código Terraform; ele não usa o estado de
+implantação dos recursos no Azure para calcular esse diff.
+
+As mesmas informações aparecem no log do step **Publish Infracost summary** e no Summary do run;
+elas não fazem parte do texto nativo produzido pelo comando `terraform plan`. O comentário
+preserva dinamicamente o resultado de conformidade retornado pelo Infracost Cloud e acrescenta as
+tabelas calculadas pelo workflow. A cada novo `git push`, o comentário é **atualizado** (graças a
+`--behavior=update`), não duplicado.
 
 > **Não vê o comentário?** Confira: a Secret `INFRACOST_API_KEY` existe? O workflow tem
 > `permissions: pull-requests: write`? (Tem — mas forks com permissões restritas podem precisar
