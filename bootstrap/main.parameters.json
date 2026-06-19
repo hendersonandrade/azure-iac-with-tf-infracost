@@ -9,7 +9,7 @@
       "value": "rg-tfstate-prod"
     },
     "storageAccountName": {
-      "value": "sttfstateprod0001"
+      "value": "sttfstateprod6e560a5a"
     },
     "containerName": {
       "value": "tfstate"

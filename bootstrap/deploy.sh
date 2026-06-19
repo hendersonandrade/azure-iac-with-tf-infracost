@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # =============================================================================
 #  bootstrap/deploy.sh
-#  Provisiona o backend de state do Terraform via Bicep — execução ÚNICA,
-#  feita manualmente por um administrador (não pelo pipeline de aplicação).
+#  Provisiona o backend de state do Terraform via Bicep. É o entrypoint do
+#  workflow bootstrap-tfstate.yml e também pode ser usado localmente para debug.
 #
 #  Pré-requisitos:
-#    - az login   (com permissão de Owner/Contributor na subscription)
+#    - sessão Azure autenticada (OIDC no pipeline ou az login local)
 #    - storageAccountName GLOBALMENTE único em main.parameters.json
 # =============================================================================
 set -euo pipefail
