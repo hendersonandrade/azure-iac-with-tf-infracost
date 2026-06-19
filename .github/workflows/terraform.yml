@@ -143,11 +143,16 @@ jobs:
       - name: Publish Infracost summary
         shell: bash
         run: |
+          infracost output \
+            --path=/tmp/infracost.json \
+            --format=table \
+            --no-color | tee /tmp/infracost-table.txt
+
           {
             echo '## Infracost cost estimate'
             echo
             echo '```text'
-            infracost output --path=/tmp/infracost.json --format=table
+            cat /tmp/infracost-table.txt
             echo '```'
           } >> "${GITHUB_STEP_SUMMARY}"
 
@@ -159,6 +164,7 @@ jobs:
             --repo=$GITHUB_REPOSITORY \
             --github-token=${{ secrets.GITHUB_TOKEN }} \
             --pull-request=${{ github.event.pull_request.number }} \
+            --show-all-projects \
             --behavior=update
 
   # ---------------------------------------------------------------------------

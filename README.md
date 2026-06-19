@@ -440,6 +440,9 @@ Abra o PR no GitHub. O pipeline dispara o job **plan**:
 
 O comentário mostra o custo mensal **antes vs. depois** da sua mudança. Ajuste o SKU e dê
 `git push` de novo — o comentário é **atualizado** (graças a `--behavior=update`), não duplicado.
+Mesmo quando o PR não altera custos, `--show-all-projects` mantém a estimativa do projeto no
+comentário. A mesma tabela aparece no log do step **Publish Infracost summary** e no Summary do
+run; ela não faz parte do texto nativo produzido pelo comando `terraform plan`.
 
 > **Não vê o comentário?** Confira: a Secret `INFRACOST_API_KEY` existe? O workflow tem
 > `permissions: pull-requests: write`? (Tem — mas forks com permissões restritas podem precisar
