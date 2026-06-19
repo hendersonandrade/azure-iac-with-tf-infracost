@@ -1,4 +1,5 @@
 # Azure IaC with Terraform and Infracost for FinOps (Shift-Left)
+[![terraform](https://github.com/hendersonandrade/azure-iac-with-tf-infracost/actions/workflows/terraform.yml/badge.svg)](https://github.com/hendersonandrade/azure-iac-with-tf-infracost/actions/workflows/terraform.yml)
 
 > Laboratório **enterprise** de Infraestrutura como Código (IaC) no Azure com **Terraform**,
 > pipeline **GitHub Actions** autenticado por **OpenID Connect (Workload Identity Federation)**,
