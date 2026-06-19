@@ -435,7 +435,8 @@ Abra o PR no GitHub. O pipeline dispara o job **plan**:
 
 1. faz login no Azure via OIDC;
 2. roda `fmt -check`, `validate` e `plan`;
-3. o **Infracost** calcula o **diff de custo** e posta um **comentário no PR**.
+3. o **Infracost** calcula o **diff de custo**, publica a tabela no resumo do run e posta um
+   **comentário no PR**.
 
 O comentário mostra o custo mensal **antes vs. depois** da sua mudança. Ajuste o SKU e dê
 `git push` de novo — o comentário é **atualizado** (graças a `--behavior=update`), não duplicado.
@@ -443,6 +444,10 @@ O comentário mostra o custo mensal **antes vs. depois** da sua mudança. Ajuste
 > **Não vê o comentário?** Confira: a Secret `INFRACOST_API_KEY` existe? O workflow tem
 > `permissions: pull-requests: write`? (Tem — mas forks com permissões restritas podem precisar
 > de ajuste em *Settings → Actions → Workflow permissions*.)
+
+O workflow também pode ser executado manualmente em **Actions → terraform → Run workflow**.
+Ao selecionar uma branch diferente da `main`, ele executa somente o plan. Ao selecionar a
+`main`, executa também o bootstrap e, depois do reviewer de `production`, o apply.
 
 ---
 
@@ -454,8 +459,9 @@ Ao fazer **merge na `main`**, o job **apply** dispara — mas, por declarar
 Depois da aprovação, o token OIDC usa o subject `repo:org/repo:environment:production`; portanto,
 a credencial federada `gh-production` do Passo 2.5 precisa existir no Entra ID.
 
-1. Vá em **Actions → (a run) → Review deployments**.
-2. Marque `production` e clique em **Approve and deploy**.
+1. Abra o **Summary** do run e revise a tabela **Infracost cost estimate** publicada pelo job
+   `validate & plan`.
+2. Vá em **Review deployments**, marque `production` e clique em **Approve and deploy**.
 3. O Terraform aplica a infraestrutura. Acompanhe o log do `terraform apply`.
 
 Ao final, os **outputs** aparecem no log (nome do RG, IP privado da VM, hostname do App Service).

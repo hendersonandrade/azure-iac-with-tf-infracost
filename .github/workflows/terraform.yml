@@ -10,10 +10,10 @@ name: terraform
 on:
   pull_request:
     branches: [main]
-    paths: ['infra/**', 'modules/**', '.github/workflows/terraform.yml']
   push:
     branches: [main]
     paths: ['bootstrap/**', 'infra/**', 'modules/**', '.github/workflows/**']
+  workflow_dispatch:
 
 # Permissões mínimas: id-token p/ OIDC, contents p/ checkout, PRs p/ comentar.
 permissions:
@@ -36,7 +36,7 @@ jobs:
   # ---------------------------------------------------------------------------
   bootstrap:
     name: bootstrap tfstate
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     uses: ./.github/workflows/bootstrap-tfstate.yml
 
   # ---------------------------------------------------------------------------
@@ -100,20 +100,38 @@ jobs:
           path: ${{ env.WORKING_DIR }}/tfplan
           retention-days: 5
 
-      # ---- Infracost: estima o custo do diff e comenta no PR ----------------
+      # ---- Infracost: publica o resumo no run e comenta o diff no PR --------
       - name: Setup Infracost
-        if: github.event_name == 'pull_request'
         uses: infracost/actions/setup@v3
         with:
           api-key: ${{ secrets.INFRACOST_API_KEY }}
 
-      - name: Infracost breakdown (diff)
+      - name: Infracost diff
         if: github.event_name == 'pull_request'
         run: |
           infracost diff \
             --config-file=../infracost/infracost.yml \
             --format=json \
             --out-file=/tmp/infracost.json
+
+      - name: Infracost breakdown
+        if: github.event_name != 'pull_request'
+        run: |
+          infracost breakdown \
+            --config-file=../infracost/infracost.yml \
+            --format=json \
+            --out-file=/tmp/infracost.json
+
+      - name: Publish Infracost summary
+        shell: bash
+        run: |
+          {
+            echo '## Infracost cost estimate'
+            echo
+            echo '```text'
+            infracost output --path=/tmp/infracost.json --format=table
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Post Infracost comment on PR
         if: github.event_name == 'pull_request'
@@ -132,7 +150,7 @@ jobs:
   apply:
     name: apply
     needs: plan
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: production # exige reviewers no Settings > Environments
     defaults:
