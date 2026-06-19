@@ -126,8 +126,9 @@ variáveis, o nome do RG e da Storage Account são passados em tempo de `init` v
 **2. Autenticação sem segredos (OIDC).** Em vez de uma client secret guardada, o GitHub Actions
 emite um **token OIDC** de curta duração por execução. O Entra ID confia nesse token graças a um
 **Federated Credential** ligado ao `subject` do repositório (`repo:org/repo:ref:refs/heads/main`
-para push, `repo:org/repo:pull_request` para PRs). Tanto o `provider "azurerm"` quanto o `backend`
-usam `use_oidc = true`.
+para push, `repo:org/repo:pull_request` para PRs e `repo:org/repo:environment:production` para o
+job de apply protegido pelo environment). Tanto o `provider "azurerm"` quanto o `backend` usam
+`use_oidc = true`.
 
 **3. A composição modular.** A raiz `infra/main.tf` cria o resource group e injeta entradas em
 cada módulo. Saídas de um módulo viram entradas de outro — ex.: `module.networking.subnet_id`
@@ -178,9 +179,8 @@ cd azure-iac-with-tf-infracost
 
 ## Passo 2 — Criar a identidade federada (OIDC / sem segredos)
 
-Cria um **App Registration** no Entra ID e **dois Federated Credentials** (um para a branch
-`main`, outro para Pull Requests) — **sem nenhuma client secret**. A credencial da `main`
-autentica tanto o bootstrap do state quanto o `terraform apply`.
+Cria um **App Registration** no Entra ID e **três Federated Credentials** — para a branch `main`,
+para Pull Requests e para o environment `production` — **sem nenhuma client secret**.
 
 **2.1 — Confirme a sessão e a subscription usadas no bootstrap do OIDC:**
 
@@ -203,7 +203,7 @@ az ad sp create --id "$appId"
 echo "AZURE_CLIENT_ID = $appId"          # guarde este valor
 ```
 
-**2.3 — Credencial federada para a `main`** (bootstrap e push → apply):
+**2.3 — Credencial federada para a `main`** (bootstrap e plan em push):
 
 ```bash
 az ad app federated-credential create --id "$appId" --parameters '{
@@ -225,7 +225,21 @@ az ad app federated-credential create --id "$appId" --parameters '{
 }'
 ```
 
-**2.5 — Dê permissão ao service principal na subscription:**
+**2.5 — Credencial federada para o environment `production`** (apply após aprovação):
+
+```bash
+az ad app federated-credential create --id "$appId" --parameters '{
+  "name": "gh-production",
+  "issuer": "https://token.actions.githubusercontent.com",
+  "subject": "repo:hendersonandrade/azure-iac-with-tf-infracost:environment:production",
+  "audiences": ["api://AzureADTokenExchange"]
+}'
+```
+
+> Quando um job declara `environment: production`, o GitHub troca o subject da branch pelo
+> subject do environment. Por isso a credencial `gh-main` não autentica o job `apply`.
+
+**2.6 — Dê permissão ao service principal na subscription:**
 
 ```bash
 subId=$(az account show --query id -o tsv)
@@ -236,7 +250,8 @@ az role assignment create --assignee "$appId" \
 
 > 💡 **Atenção ao `subject`.** Ele precisa casar **exatamente** com o seu `org/repo` e o gatilho.
 > Se você fez fork, troque `hendersonandrade/azure-iac-with-tf-infracost` pelo seu. Um `subject`
-> errado é a causa nº 1 de falha de login OIDC no pipeline.
+> errado é a causa nº 1 de falha de login OIDC no pipeline. O nome `production` também deve ser
+> idêntico no GitHub Environment, no workflow e na credencial federada.
 
 ---
 
@@ -324,6 +339,8 @@ infracost configure get api_key
 - Crie um environment chamado exatamente **`production`**.
 - Marque **Required reviewers** e adicione você mesmo. É isso que faz o job `apply` **pausar e
   esperar aprovação** antes de tocar no Azure.
+- A regra **Required reviewers** está disponível em repositórios públicos; em repositórios
+  privados, sua disponibilidade depende do plano GitHub Enterprise.
 
 ---
 
@@ -434,6 +451,9 @@ O comentário mostra o custo mensal **antes vs. depois** da sua mudança. Ajuste
 Ao fazer **merge na `main`**, o job **apply** dispara — mas, por declarar
 `environment: production`, fica **pausado aguardando aprovação**.
 
+Depois da aprovação, o token OIDC usa o subject `repo:org/repo:environment:production`; portanto,
+a credencial federada `gh-production` do Passo 2.5 precisa existir no Entra ID.
+
 1. Vá em **Actions → (a run) → Review deployments**.
 2. Marque `production` e clique em **Approve and deploy**.
 3. O Terraform aplica a infraestrutura. Acompanhe o log do `terraform apply`.
@@ -529,7 +549,7 @@ significativamente mais — não o aplique sem necessidade.
 | Sintoma | Causa provável / correção |
 | --- | --- |
 | `Error: building AzureRM Client: ... OIDC` | O `subject` do federated credential não casa com o repo/branch (Passo 2). Verifique `org/repo` e o gatilho (`ref:refs/heads/main` vs `pull_request`). |
-| `AADSTS70021: No matching federated identity record found` | Faltou criar a credencial federada para o gatilho em uso (PR usa `:pull_request`, push usa `:ref:refs/heads/main`). |
+| `AADSTS70021: No matching federated identity record found` | Faltou a credencial para o subject apresentado: PR usa `:pull_request`, push usa `:ref:refs/heads/main` e o apply usa `:environment:production`. |
 | Pipeline não encontra a configuração do backend | Verifique se `resourceGroupName` e `storageAccountName` existem em `bootstrap/main.parameters.json`. |
 | `A resource with the ID ... already exists` | Nome de recurso não é único (ex.: `storageAccountName`). Ajuste o parâmetro/`*.tfvars`. |
 | `Error acquiring the state lock` | Um `apply` anterior travou o state. Rode `terraform force-unlock <LOCK_ID>` com cuidado. |
